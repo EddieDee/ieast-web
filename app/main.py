@@ -27,6 +27,18 @@ from aiohttp import ClientSession, TCPConnector
 import socket
 
 STATIC = Path(__file__).parent / "static"
+LOG = Path(__file__).resolve().parent.parent / "ieast-web.log"
+
+
+def log(msg: str) -> None:
+    import datetime
+    line = f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} {msg}"
+    print(line, flush=True)
+    try:
+        with LOG.open("a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
 
 # Load .env from the project folder so the Task Scheduler job needs no env setup.
 _env = Path(__file__).resolve().parent.parent / ".env"
@@ -54,16 +66,16 @@ async def load_devices() -> None:
             b = await linkplay_factory_httpapi_bridge(ip, session)
             found[b.device.uuid] = b
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] could not reach {ip}: {exc}")
+            log(f"[warn] could not reach {ip}: {exc}")
     if os.getenv("DISCOVER", "0") == "1":
         try:
             for b in await discover_linkplay_bridges(session):
                 found.setdefault(b.device.uuid, b)
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] discovery failed: {exc}")
+            log(f"[warn] discovery failed: {exc}")
     bridges.clear()
     bridges.update(found)
-    print(f"[info] {len(bridges)} device(s): " + ", ".join(b.device.name for b in bridges.values()))
+    log(f"[info] {len(bridges)} device(s): " + ", ".join(b.device.name for b in bridges.values()))
 
 
 @asynccontextmanager
@@ -114,7 +126,7 @@ async def devices():
         try:
             await b.player.update_status()
         except Exception as exc:  # noqa: BLE001
-            print(f"[warn] status refresh failed for {b.device.name}: {exc}")
+            log(f"[warn] status refresh failed for {b.device.name}: {exc}")
         return snapshot(b)
     return await asyncio.gather(*(refresh(b) for b in bridges.values()))
 
@@ -135,7 +147,7 @@ async def command(uuid: str, cmd: Cmd):
     b = get(uuid)
     p = b.player
     a, v = cmd.action, cmd.value
-    print(f"[cmd] {b.device.name}: {a} {v if v is not None else ''}")
+    log(f"[cmd] {b.device.name}: {a} {v if v is not None else ''}")
     reply = "OK"
     try:
         if a == "play": await p.resume()
@@ -151,7 +163,7 @@ async def command(uuid: str, cmd: Cmd):
         elif a == "play_url":
             # Send directly so we can report the device's reply ("OK", "Failed", ...)
             reply = await session_call_api(b.endpoint._endpoint, session, f"setPlayerCmd:play:{v}")
-            print(f"[cmd] device replied: {reply!r}")
+            log(f"[cmd] device replied: {reply!r}")
         elif a == "source": await p.set_play_mode(SOURCES[str(v)])
         elif a == "equalizer": await p.set_equalizer_mode(EqualizerMode[str(v).upper()])
         elif a == "reboot": await get(uuid).device.reboot()
@@ -159,7 +171,7 @@ async def command(uuid: str, cmd: Cmd):
     except (KeyError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        print(f"[cmd] failed: {exc}")
+        log(f"[cmd] failed: {exc}")
         raise HTTPException(502, f"device error: {exc}") from exc
     # Devices sometimes answer "unknown command" to a status refresh right after a
     # command; retry once, then fall back to the last known state.
