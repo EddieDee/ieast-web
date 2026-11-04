@@ -22,7 +22,9 @@ from pydantic import BaseModel
 from linkplay.bridge import LinkPlayBridge
 from linkplay.consts import EqualizerMode, PlayingMode
 from linkplay.discovery import discover_linkplay_bridges, linkplay_factory_httpapi_bridge
-from linkplay.utils import async_create_unverified_client_session
+from linkplay.utils import MTLS_CERTIFICATE_CONTENTS, async_create_ssl_context
+from aiohttp import ClientSession, TCPConnector
+import socket
 
 STATIC = Path(__file__).parent / "static"
 bridges: dict[str, LinkPlayBridge] = {}
@@ -32,7 +34,12 @@ session = None
 async def load_devices() -> None:
     global session
     if session is None:
-        session = await async_create_unverified_client_session()
+        # Write the LinkPlay client certificate to a regular file. The library's own
+        # NamedTemporaryFile approach fails on Windows with "Permission denied".
+        certfile = Path(__file__).parent / "linkplay.pem"
+        certfile.write_text(MTLS_CERTIFICATE_CONTENTS, encoding="utf-8")
+        ctx = await async_create_ssl_context(certfile=str(certfile))
+        session = ClientSession(connector=TCPConnector(family=socket.AF_UNSPEC, ssl=ctx))
     found: dict[str, LinkPlayBridge] = {}
     for ip in filter(None, (s.strip() for s in os.getenv("DEVICES", "").split(","))):
         try:
