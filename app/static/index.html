@@ -20,20 +20,17 @@ input[type=range]{flex:1;accent-color:var(--acc)}select{padding:8px;border-radiu
 <header><strong>iEAST Control</strong><button onclick="rescan()">Rescan</button></header>
 <main id="m"></main>
 <script>
-const STATIONS=[
- {name:'Classical (Venice)',url:'http://174.36.206.197:8000/stream'},
- {name:'Classic FM (UK)',url:'http://media-ice.musicradio.com/ClassicFMMP3'},
- {name:'Radio Swiss Classic',url:'http://stream.srg-ssr.ch/m/rsc_de/mp3_128'},
- {name:'Smooth Jazz',url:'http://smoothjazz.cdnstream1.com/2585_128.mp3'},
- {name:'Lounge (SomaFM)',url:'http://ice1.somafm.com/groovesalad-128-mp3'},
-];
-const $=document.getElementById('m');let devs=[];
+const $=document.getElementById('m');let devs=[];const stations={};
+async function search(u){const q=(document.getElementById('q-'+u)||{}).value||'';
+ const tag=q?'':'classical';const r=await fetch(`/api/stations?q=${encodeURIComponent(q)}&tag=${tag}`);
+ if(!r.ok){alert((await r.json()).detail);return;} stations[u]=await r.json();render();}
+async function loadDefaultStations(){const r=await fetch('/api/stations?tag=classical');if(r.ok){const l=await r.json();devs.forEach(d=>stations[d.uuid]=stations[d.uuid]||l);render();}}
 async function load(){devs=await (await fetch('/api/devices')).json();render();}
 async function cmd(u,action,value){const r=await fetch(`/api/devices/${u}/cmd`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,value})});
  if(r.ok){const d=await r.json();devs=devs.map(x=>x.uuid===u?d:x);render();}else alert((await r.json()).detail);}
 async function rescan(){await fetch('/api/rescan',{method:'POST'});load();}
 const cap=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
-function render(){ if(!devs.length){$.innerHTML='<p class="sub">No devices. Check DEVICES setting.</p>';return;}
+function render(){const q={};document.querySelectorAll('[id^=q-]').forEach(e=>q[e.id]=e.value); if(!devs.length){$.innerHTML='<p class="sub">No devices. Check DEVICES setting.</p>';return;}
 $.innerHTML=devs.map(d=>d.error?`<div class="card"><h2>${d.name}</h2><div class="err">${d.error}</div></div>`:`
 <div class="card"><div><h2>${d.name}</h2><div class="sub">${d.model} · ${d.ip} · ${d.status}</div></div>
 <div class="now"><img src="${d.art||''}" onerror="this.style.visibility='hidden'"><div><div><b>${d.title||'—'}</b></div><div class="sub">${d.artist||''} ${d.album?'· '+d.album:''}</div></div></div>
@@ -42,8 +39,9 @@ $.innerHTML=devs.map(d=>d.error?`<div class="card"><h2>${d.name}</h2><div class=
 <div class="row"><span class="sub">Source</span><select onchange="cmd('${d.uuid}','source',this.value)">${d.sources.map(s=>`<option value="${s}" ${s===d.source?'selected':''}>${cap(s)}</option>`).join('')}</select>
 <span class="sub">EQ</span><select onchange="cmd('${d.uuid}','equalizer',this.value)">${d.equalizers.map(s=>`<option value="${s}" ${s===d.equalizer?'selected':''}>${cap(s)}</option>`).join('')}</select></div>
 <div class="row"><span class="sub">Presets</span>${[1,2,3,4,5,6].map(n=>`<button onclick="cmd('${d.uuid}','preset',${n})">${n}</button>`).join('')}</div>
-<div class="row"><span class="sub">Radio</span>${STATIONS.map(s=>`<button onclick="cmd('${d.uuid}','play_url','${s.url}')">${s.name}</button>`).join('')}</div>
+<div class="row"><span class="sub">Radio</span><input id="q-${d.uuid}" placeholder="Search stations (e.g. classical, jazz, Mozart)" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)" onkeydown="if(event.key==='Enter')search('${d.uuid}')"><button onclick="search('${d.uuid}')">Search</button></div>
+<div class="row" id="st-${d.uuid}">${(stations[d.uuid]||[]).map(s=>`<button title="${s.country} ${s.codec} ${s.bitrate}k" onclick="cmd('${d.uuid}','play_url','${s.url}')">${s.name}</button>`).join('')}</div>
 <div class="row"><input type="url" placeholder="Stream URL (http://...)" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)" id="u-${d.uuid}"><button onclick="cmd('${d.uuid}','play_url',document.getElementById('u-${d.uuid}').value)">Play URL</button></div>
-</div>`).join('');}
-load();setInterval(load,5000);
+</div>`).join('');Object.entries(q).forEach(([k,v])=>{const e=document.getElementById(k);if(e)e.value=v;});}
+load().then(loadDefaultStations);setInterval(load,5000);
 </script></body></html>

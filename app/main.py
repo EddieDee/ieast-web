@@ -164,6 +164,35 @@ async def command(uuid: str, cmd: Cmd):
     return snapshot(get(uuid))
 
 
+RADIO_API = "https://de1.api.radio-browser.info/json/stations/search"
+_station_cache: dict[str, list] = {}
+
+
+@app.get("/api/stations")
+async def stations(q: str = "", tag: str = "classical", limit: int = 40):
+    """Verified, top-voted internet radio stations from radio-browser.info."""
+    key = f"{q}|{tag}|{limit}"
+    if key in _station_cache:
+        return _station_cache[key]
+    params = {"order": "votes", "reverse": "true", "hidebroken": "true", "limit": str(limit)}
+    if q:
+        params["name"] = q
+    if tag:
+        params["tag"] = tag
+    try:
+        async with ClientSession() as http:
+            async with http.get(RADIO_API, params=params, timeout=15,
+                                headers={"User-Agent": "ieast-web/1.0"}) as r:
+                data = await r.json(content_type=None)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"radio directory unavailable: {exc}") from exc
+    out = [{"name": st["name"].strip(), "url": st["url_resolved"] or st["url"],
+            "country": st.get("country", ""), "codec": st.get("codec", ""), "bitrate": st.get("bitrate", 0)}
+           for st in data if (st.get("url_resolved") or st.get("url"))]
+    _station_cache[key] = out
+    return out
+
+
 @app.get("/api/devices/{uuid}/raw/{command}")
 async def raw(uuid: str, command: str):
     """Escape hatch: forward any httpapi.asp command, e.g. /raw/getStatusEx."""
