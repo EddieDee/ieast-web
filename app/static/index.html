@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>iEAST Control</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--fg:#111;--mut:#667;--acc:#2563eb;--bd:#e3e5ea}
+@media(prefers-color-scheme:dark){:root{--bg:#111318;--card:#1b1e26;--fg:#eef;--mut:#99a;--acc:#60a5fa;--bd:#2a2e3a}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px system-ui,sans-serif}
+header{padding:16px;display:flex;justify-content:space-between;align-items:center}
+main{padding:0 16px 32px;display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;display:grid;gap:12px}
+h2{margin:0;font-size:18px}.sub{color:var(--mut);font-size:13px}
+.now{display:flex;gap:12px;align-items:center;min-height:56px}.now img{width:56px;height:56px;border-radius:8px;object-fit:cover;background:var(--bd)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button{border:1px solid var(--bd);background:var(--bg);color:var(--fg);border-radius:10px;padding:10px 14px;font-size:15px;cursor:pointer}
+button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+input[type=range]{flex:1;accent-color:var(--acc)}select{padding:8px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)}
+.err{color:#c33}
+</style></head><body>
+<header><strong>iEAST Control</strong><button onclick="rescan()">Rescan</button></header>
+<main id="m"></main>
+<script>
+const $=document.getElementById('m');let devs=[];
+async function load(){devs=await (await fetch('/api/devices')).json();render();}
+async function cmd(u,action,value){const r=await fetch(`/api/devices/${u}/cmd`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,value})});
+ if(r.ok){const d=await r.json();devs=devs.map(x=>x.uuid===u?d:x);render();}else alert((await r.json()).detail);}
+async function rescan(){await fetch('/api/rescan',{method:'POST'});load();}
+const cap=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+function render(){ if(!devs.length){$.innerHTML='<p class="sub">No devices. Check DEVICES setting.</p>';return;}
+$.innerHTML=devs.map(d=>d.error?`<div class="card"><h2>${d.name}</h2><div class="err">${d.error}</div></div>`:`
+<div class="card"><div><h2>${d.name}</h2><div class="sub">${d.model} · ${d.ip} · ${d.status}</div></div>
+<div class="now"><img src="${d.art||''}" onerror="this.style.visibility='hidden'"><div><div><b>${d.title||'—'}</b></div><div class="sub">${d.artist||''} ${d.album?'· '+d.album:''}</div></div></div>
+<div class="row"><button onclick="cmd('${d.uuid}','prev')">⏮</button><button class="on" onclick="cmd('${d.uuid}','toggle')">${d.status==='playing'?'⏸':'▶'}</button><button onclick="cmd('${d.uuid}','next')">⏭</button><button onclick="cmd('${d.uuid}','stop')">⏹</button></div>
+<div class="row"><button onclick="cmd('${d.uuid}','${d.muted?'unmute':'mute'}')">${d.muted?'🔇':'🔊'}</button><input type="range" min="0" max="100" value="${d.volume}" onchange="cmd('${d.uuid}','volume',+this.value)"><span>${d.volume}</span></div>
+<div class="row"><span class="sub">Source</span><select onchange="cmd('${d.uuid}','source',this.value)">${d.sources.map(s=>`<option value="${s}" ${s===d.source?'selected':''}>${cap(s)}</option>`).join('')}</select>
+<span class="sub">EQ</span><select onchange="cmd('${d.uuid}','equalizer',this.value)">${d.equalizers.map(s=>`<option value="${s}" ${s===d.equalizer?'selected':''}>${cap(s)}</option>`).join('')}</select></div>
+<div class="row"><span class="sub">Presets</span>${[1,2,3,4,5,6].map(n=>`<button onclick="cmd('${d.uuid}','preset',${n})">${n}</button>`).join('')}</div>
+</div>`).join('');}
+load();setInterval(load,5000);
+</script></body></html>

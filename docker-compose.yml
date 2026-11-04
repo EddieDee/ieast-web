@@ -1,0 +1,9 @@
+services:
+  ieast-web:
+    build: .
+    restart: unless-stopped
+    ports: ["8080:8080"]
+    environment:
+      # Fixed IPs of the iEAST units (give them DHCP reservations on the router/SonicWall)
+      DEVICES: "192.168.1.50,192.168.1.51"
+      DISCOVER: "0"   # multicast discovery does not work through Docker NAT; set 1 only when running natively

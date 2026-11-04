@@ -1,0 +1,152 @@
+"""iEAST / LinkPlay web controller.
+
+Runs on the client's LAN (Windows server, Docker, anything with Python 3.11+).
+Users reach it through the SonicWall VPN at http://<server-ip>:8080.
+
+Config via environment variables:
+  DEVICES   comma-separated IPs of the iEAST units (recommended, required in Docker).
+            Example: DEVICES=192.168.1.50,192.168.1.51
+  DISCOVER  "1" to also try multicast discovery (works only when running natively on the LAN).
+  PORT      listening port, default 8080.
+"""
+import asyncio
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+from linkplay.bridge import LinkPlayBridge
+from linkplay.consts import EqualizerMode, PlayingMode
+from linkplay.discovery import discover_linkplay_bridges, linkplay_factory_httpapi_bridge
+from linkplay.utils import async_create_unverified_client_session
+
+STATIC = Path(__file__).parent / "static"
+bridges: dict[str, LinkPlayBridge] = {}
+session = None
+
+
+async def load_devices() -> None:
+    global session
+    if session is None:
+        session = await async_create_unverified_client_session()
+    found: dict[str, LinkPlayBridge] = {}
+    for ip in filter(None, (s.strip() for s in os.getenv("DEVICES", "").split(","))):
+        try:
+            b = await linkplay_factory_httpapi_bridge(ip, session)
+            found[b.device.uuid] = b
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] could not reach {ip}: {exc}")
+    if os.getenv("DISCOVER", "0") == "1":
+        try:
+            for b in await discover_linkplay_bridges(session):
+                found.setdefault(b.device.uuid, b)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[warn] discovery failed: {exc}")
+    bridges.clear()
+    bridges.update(found)
+    print(f"[info] {len(bridges)} device(s): " + ", ".join(b.device.name for b in bridges.values()))
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await load_devices()
+    yield
+    if session:
+        await session.close()
+
+
+app = FastAPI(title="iEAST Web Control", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+SOURCES = {
+    "wifi": PlayingMode.NETWORK, "line_in": PlayingMode.LINE_IN, "bluetooth": PlayingMode.BLUETOOTH,
+    "optical": PlayingMode.OPTICAL, "coaxial": PlayingMode.COAXIAL, "usb": PlayingMode.UDISK,
+}
+
+
+def get(uuid: str) -> LinkPlayBridge:
+    if uuid not in bridges:
+        raise HTTPException(404, "device not found")
+    return bridges[uuid]
+
+
+def snapshot(b: LinkPlayBridge) -> dict:
+    p = b.device.playmode_support
+    return {
+        "uuid": b.device.uuid, "name": b.device.name, "model": b.device.model,
+        "ip": b.endpoint._endpoint if hasattr(b.endpoint, "_endpoint") else str(b.endpoint),
+        "status": b.player.status.value, "volume": b.player.volume, "muted": b.player.muted,
+        "title": b.player.title, "artist": b.player.artist, "album": b.player.album,
+        "art": b.player.album_art, "source": b.player.play_mode.name.lower(),
+        "equalizer": b.player.equalizer_mode.name.lower(),
+        "equalizers": [e.name.lower() for e in b.player.available_equalizer_modes],
+        "sources": [k for k, v in SOURCES.items() if v in p],
+    }
+
+
+@app.get("/")
+async def index():
+    return FileResponse(STATIC / "index.html")
+
+
+@app.get("/api/devices")
+async def devices():
+    async def refresh(b: LinkPlayBridge):
+        try:
+            await b.player.update_status()
+            return snapshot(b)
+        except Exception as exc:  # noqa: BLE001
+            return {"uuid": b.device.uuid, "name": b.device.name, "error": str(exc)}
+    return await asyncio.gather(*(refresh(b) for b in bridges.values()))
+
+
+@app.post("/api/rescan")
+async def rescan():
+    await load_devices()
+    return {"count": len(bridges)}
+
+
+class Cmd(BaseModel):
+    action: str
+    value: int | str | None = None
+
+
+@app.post("/api/devices/{uuid}/cmd")
+async def command(uuid: str, cmd: Cmd):
+    p = get(uuid).player
+    a, v = cmd.action, cmd.value
+    try:
+        if a == "play": await p.resume()
+        elif a == "pause": await p.pause()
+        elif a == "toggle": await p.toggle()
+        elif a == "stop": await p.stop()
+        elif a == "next": await p.next()
+        elif a == "prev": await p.previous()
+        elif a == "mute": await p.mute()
+        elif a == "unmute": await p.unmute()
+        elif a == "volume": await p.set_volume(max(0, min(100, int(v))))
+        elif a == "preset": await p.play_preset(int(v))
+        elif a == "play_url": await p.play(str(v))
+        elif a == "source": await p.set_play_mode(SOURCES[str(v)])
+        elif a == "equalizer": await p.set_equalizer_mode(EqualizerMode[str(v).upper()])
+        elif a == "reboot": await get(uuid).device.reboot()
+        else: raise HTTPException(400, f"unknown action {a}")
+    except (KeyError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    await p.update_status()
+    return snapshot(get(uuid))
+
+
+@app.get("/api/devices/{uuid}/raw/{command}")
+async def raw(uuid: str, command: str):
+    """Escape hatch: forward any httpapi.asp command, e.g. /raw/getStatusEx."""
+    return JSONResponse(await get(uuid).json_request(command))
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app.main:app", host="0.0.0.0", port=int(os.getenv("PORT", "8080")))
