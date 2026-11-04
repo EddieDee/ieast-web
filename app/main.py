@@ -127,7 +127,7 @@ def snapshot(b: LinkPlayBridge) -> dict:
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/devices")
@@ -209,7 +209,7 @@ async def stations(q: str = "", tag: str = "classical", limit: int = 40):
     key = f"{q}|{tag}|{limit}"
     if key in _station_cache:
         return _station_cache[key]
-    params = {"order": "votes", "reverse": "true", "hidebroken": "true", "limit": str(limit)}
+    params = {"order": "votes", "reverse": "true", "hidebroken": "true", "limit": str(limit * 3)}
     if q:
         params["name"] = q
     if tag:
@@ -221,9 +221,19 @@ async def stations(q: str = "", tag: str = "classical", limit: int = 40):
                 data = await r.json(content_type=None)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(502, f"radio directory unavailable: {exc}") from exc
-    out = [{"name": st["name"].strip(), "url": st["url_resolved"] or st["url"],
-            "country": st.get("country", ""), "codec": st.get("codec", ""), "bitrate": st.get("bitrate", 0)}
-           for st in data if (st.get("url_resolved") or st.get("url"))]
+    # LinkPlay modules play MP3/AAC http(s) streams; skip Opus, HLS playlists, etc.
+    out = []
+    for st in data:
+        url = st.get("url_resolved") or st.get("url") or ""
+        codec = (st.get("codec") or "").upper()
+        if not url.startswith("http") or url.endswith((".m3u8", ".pls", ".m3u")):
+            continue
+        if codec not in ("MP3", "AAC", "AAC+"):
+            continue
+        out.append({"name": st["name"].strip(), "url": url, "country": st.get("country", ""),
+                    "codec": codec, "bitrate": st.get("bitrate", 0)})
+        if len(out) >= limit:
+            break
     _station_cache[key] = out
     return out
 
