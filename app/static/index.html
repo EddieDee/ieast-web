@@ -27,7 +27,8 @@ async function search(u){const q=(document.getElementById('q-'+u)||{}).value||''
 async function loadDefaultStations(){const r=await fetch('/api/stations?tag=classical');if(r.ok){const l=await r.json();devs.forEach(d=>stations[d.uuid]=stations[d.uuid]||l);render();}}
 async function load(){devs=await (await fetch('/api/devices')).json();render();}
 async function cmd(u,action,value){const r=await fetch(`/api/devices/${u}/cmd`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,value})});
- if(r.ok){const d=await r.json();devs=devs.map(x=>x.uuid===u?d:x);render();}else alert((await r.json()).detail);}
+ let d;try{d=await r.json();}catch(e){d={detail:r.status+' '+r.statusText};}
+ if(r.ok){if(d.reply&&d.reply!=='OK')alert('Speaker replied: '+d.reply);devs=devs.map(x=>x.uuid===u?d:x);render();}else alert('Error: '+(d.detail||JSON.stringify(d)));}
 async function rescan(){await fetch('/api/rescan',{method:'POST'});load();}
 const cap=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
 function render(){const q={};document.querySelectorAll('[id^=q-]').forEach(e=>q[e.id]=e.value); if(!devs.length){$.innerHTML='<p class="sub">No devices. Check DEVICES setting.</p>';return;}

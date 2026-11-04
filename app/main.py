@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from linkplay.bridge import LinkPlayBridge
 from linkplay.consts import EqualizerMode, PlayingMode
 from linkplay.discovery import discover_linkplay_bridges, linkplay_factory_httpapi_bridge
-from linkplay.utils import MTLS_CERTIFICATE_CONTENTS, async_create_ssl_context
+from linkplay.utils import MTLS_CERTIFICATE_CONTENTS, async_create_ssl_context, session_call_api
 from aiohttp import ClientSession, TCPConnector
 import socket
 
@@ -132,8 +132,11 @@ class Cmd(BaseModel):
 
 @app.post("/api/devices/{uuid}/cmd")
 async def command(uuid: str, cmd: Cmd):
-    p = get(uuid).player
+    b = get(uuid)
+    p = b.player
     a, v = cmd.action, cmd.value
+    print(f"[cmd] {b.device.name}: {a} {v if v is not None else ''}")
+    reply = "OK"
     try:
         if a == "play": await p.resume()
         elif a == "pause": await p.pause()
@@ -145,13 +148,19 @@ async def command(uuid: str, cmd: Cmd):
         elif a == "unmute": await p.unmute()
         elif a == "volume": await p.set_volume(max(0, min(100, int(v))))
         elif a == "preset": await p.play_preset(int(v))
-        elif a == "play_url": await p.play(str(v))
+        elif a == "play_url":
+            # Send directly so we can report the device's reply ("OK", "Failed", ...)
+            reply = await session_call_api(b.endpoint._endpoint, session, f"setPlayerCmd:play:{v}")
+            print(f"[cmd] device replied: {reply!r}")
         elif a == "source": await p.set_play_mode(SOURCES[str(v)])
         elif a == "equalizer": await p.set_equalizer_mode(EqualizerMode[str(v).upper()])
         elif a == "reboot": await get(uuid).device.reboot()
         else: raise HTTPException(400, f"unknown action {a}")
     except (KeyError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        print(f"[cmd] failed: {exc}")
+        raise HTTPException(502, f"device error: {exc}") from exc
     # Devices sometimes answer "unknown command" to a status refresh right after a
     # command; retry once, then fall back to the last known state.
     for _ in range(2):
@@ -161,7 +170,7 @@ async def command(uuid: str, cmd: Cmd):
             break
         except Exception:  # noqa: BLE001
             pass
-    return snapshot(get(uuid))
+    return {**snapshot(b), "reply": reply}
 
 
 RADIO_API = "https://de1.api.radio-browser.info/json/stations/search"
