@@ -26,22 +26,22 @@ async function search(u){const q=(document.getElementById('q-'+u)||{}).value||''
  if(!r.ok){alert((await r.json()).detail);return;} stations[u]=await r.json();render();}
 async function loadDefaultStations(){const r=await fetch('/api/stations?tag=classical');if(r.ok){const l=await r.json();devs.forEach(d=>stations[d.uuid]=stations[d.uuid]||l);render();}}
 async function load(){devs=await (await fetch('/api/devices')).json();render();}
-async function cmd(u,action,value){const r=await fetch(`/api/devices/${u}/cmd`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,value})});
+async function cmd(u,action,value,label){const r=await fetch(`/api/devices/${u}/cmd`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action,value,label})});
  let d;try{d=await r.json();}catch(e){d={detail:r.status+' '+r.statusText};}
  if(r.ok){if(d.reply&&d.reply!=='OK')alert('Speaker replied: '+d.reply);devs=devs.map(x=>x.uuid===u?d:x);render();}else alert('Error: '+(d.detail||JSON.stringify(d)));}
 async function rescan(){await fetch('/api/rescan',{method:'POST'});load();}
 const cap=s=>s.replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
 function render(){const q={};document.querySelectorAll('[id^=q-]').forEach(e=>q[e.id]=e.value); if(!devs.length){$.innerHTML='<p class="sub">No devices. Check DEVICES setting.</p>';return;}
 $.innerHTML=devs.map(d=>d.error?`<div class="card"><h2>${d.name}</h2><div class="err">${d.error}</div></div>`:`
-<div class="card"><div><h2>${d.name}</h2><div class="sub">${d.model} · ${d.ip} · ${d.status}</div></div>
-<div class="now"><img src="${d.art||''}" onerror="this.style.visibility='hidden'"><div><div><b>${d.title||'—'}</b></div><div class="sub">${d.artist||''} ${d.album?'· '+d.album:''}</div></div></div>
+<div class="card"><div><h2>${d.name}</h2><div class="sub">${d.model} · ${d.ip} · ${d.status}${d.streaming?' · <span style="color:#16a34a">● audio streaming</span>':''}</div></div>
+<div class="now"><img src="${d.art||''}" onerror="this.style.visibility='hidden'"><div>${d.selected?`<div class="sub">Selected: <b>${d.selected}</b></div>`:''}<div><b>${d.title||'—'}</b></div><div class="sub">${d.artist||''} ${d.album?'· '+d.album:''}</div></div></div>
 <div class="row"><button onclick="cmd('${d.uuid}','prev')">⏮</button><button class="on" onclick="cmd('${d.uuid}','toggle')">${d.status==='playing'?'⏸':'▶'}</button><button onclick="cmd('${d.uuid}','next')">⏭</button><button onclick="cmd('${d.uuid}','stop')">⏹</button></div>
 <div class="row"><button onclick="cmd('${d.uuid}','${d.muted?'unmute':'mute'}')">${d.muted?'🔇':'🔊'}</button><input type="range" min="0" max="100" value="${d.volume}" onchange="cmd('${d.uuid}','volume',+this.value)"><span>${d.volume}</span></div>
 <div class="row"><span class="sub">Source</span><select onchange="cmd('${d.uuid}','source',this.value)">${d.sources.map(s=>`<option value="${s}" ${s===d.source?'selected':''}>${cap(s)}</option>`).join('')}</select>
 <span class="sub">EQ</span><select onchange="cmd('${d.uuid}','equalizer',this.value)">${d.equalizers.map(s=>`<option value="${s}" ${s===d.equalizer?'selected':''}>${cap(s)}</option>`).join('')}</select></div>
 <div class="row"><span class="sub">Presets</span>${[1,2,3,4,5,6].map(n=>`<button onclick="cmd('${d.uuid}','preset',${n})">${n}</button>`).join('')}</div>
 <div class="row"><span class="sub">Radio</span><input id="q-${d.uuid}" placeholder="Search stations (e.g. classical, jazz, Mozart)" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)" onkeydown="if(event.key==='Enter')search('${d.uuid}')"><button onclick="search('${d.uuid}')">Search</button></div>
-<div class="row" id="st-${d.uuid}">${(stations[d.uuid]||[]).map(s=>`<button title="${s.country} ${s.codec} ${s.bitrate}k" onclick="cmd('${d.uuid}','play_url','${s.url}')">${s.name}</button>`).join('')}</div>
+<div class="row" id="st-${d.uuid}">${(stations[d.uuid]||[]).map(s=>`<button title="${s.country} ${s.codec} ${s.bitrate}k" onclick="cmd('${d.uuid}','play_url','${s.url}','${s.name.replace(/'/g,'')}')">${s.name}</button>`).join('')}</div>
 <div class="row"><input type="url" placeholder="Stream URL (http://...)" style="flex:1;padding:9px;border-radius:8px;border:1px solid var(--bd);background:var(--bg);color:var(--fg)" id="u-${d.uuid}"><button onclick="cmd('${d.uuid}','play_url',document.getElementById('u-${d.uuid}').value)">Play URL</button></div>
 </div>`).join('');Object.entries(q).forEach(([k,v])=>{const e=document.getElementById(k);if(e)e.value=v;});}
 load().then(loadDefaultStations);setInterval(load,5000);

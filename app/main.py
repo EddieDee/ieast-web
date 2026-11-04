@@ -48,6 +48,8 @@ if _env.is_file():
             _k, _v = _line.split("=", 1)
             os.environ.setdefault(_k.strip(), _v.strip())
 bridges: dict[str, LinkPlayBridge] = {}
+selected: dict[str, str] = {}   # uuid -> name of the station the user last chose
+last_pos: dict[str, tuple[int, float]] = {}  # uuid -> (position, timestamp)
 session = None
 
 
@@ -102,8 +104,16 @@ def get(uuid: str) -> LinkPlayBridge:
 
 
 def snapshot(b: LinkPlayBridge) -> dict:
+    import time
     p = b.device.playmode_support
+    u = b.device.uuid
+    pos = b.player.current_position
+    prev = last_pos.get(u)
+    last_pos[u] = (pos, time.time())
+    # "streaming" = position advanced since the last poll while status is play
+    streaming = bool(prev and pos > prev[0] and b.player.status.value == "play")
     return {
+        "selected": selected.get(u, ""), "position": pos, "streaming": streaming,
         "uuid": b.device.uuid, "name": b.device.name, "model": b.device.model,
         "ip": b.endpoint._endpoint if hasattr(b.endpoint, "_endpoint") else str(b.endpoint),
         "status": b.player.status.value, "volume": b.player.volume, "muted": b.player.muted,
@@ -140,6 +150,7 @@ async def rescan():
 class Cmd(BaseModel):
     action: str
     value: int | str | None = None
+    label: str | None = None
 
 
 @app.post("/api/devices/{uuid}/cmd")
@@ -159,11 +170,14 @@ async def command(uuid: str, cmd: Cmd):
         elif a == "mute": await p.mute()
         elif a == "unmute": await p.unmute()
         elif a == "volume": await p.set_volume(max(0, min(100, int(v))))
-        elif a == "preset": await p.play_preset(int(v))
         elif a == "play_url":
             # Send directly so we can report the device's reply ("OK", "Failed", ...)
             reply = await session_call_api(b.endpoint._endpoint, session, f"setPlayerCmd:play:{v}")
             log(f"[cmd] device replied: {reply!r}")
+            selected[uuid] = cmd.label or str(v)
+        elif a == "preset":
+            await p.play_preset(int(v))
+            selected[uuid] = f"Preset {v}"
         elif a == "source": await p.set_play_mode(SOURCES[str(v)])
         elif a == "equalizer": await p.set_equalizer_mode(EqualizerMode[str(v).upper()])
         elif a == "reboot": await get(uuid).device.reboot()
