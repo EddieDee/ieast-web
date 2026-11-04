@@ -27,6 +27,14 @@ from aiohttp import ClientSession, TCPConnector
 import socket
 
 STATIC = Path(__file__).parent / "static"
+
+# Load .env from the project folder so the Task Scheduler job needs no env setup.
+_env = Path(__file__).resolve().parent.parent / ".env"
+if _env.is_file():
+    for _line in _env.read_text().splitlines():
+        if "=" in _line and not _line.lstrip().startswith("#"):
+            _k, _v = _line.split("=", 1)
+            os.environ.setdefault(_k.strip(), _v.strip())
 bridges: dict[str, LinkPlayBridge] = {}
 session = None
 
@@ -105,9 +113,9 @@ async def devices():
     async def refresh(b: LinkPlayBridge):
         try:
             await b.player.update_status()
-            return snapshot(b)
         except Exception as exc:  # noqa: BLE001
-            return {"uuid": b.device.uuid, "name": b.device.name, "error": str(exc)}
+            print(f"[warn] status refresh failed for {b.device.name}: {exc}")
+        return snapshot(b)
     return await asyncio.gather(*(refresh(b) for b in bridges.values()))
 
 
@@ -144,7 +152,15 @@ async def command(uuid: str, cmd: Cmd):
         else: raise HTTPException(400, f"unknown action {a}")
     except (KeyError, ValueError) as exc:
         raise HTTPException(400, str(exc)) from exc
-    await p.update_status()
+    # Devices sometimes answer "unknown command" to a status refresh right after a
+    # command; retry once, then fall back to the last known state.
+    for _ in range(2):
+        try:
+            await asyncio.sleep(0.3)
+            await p.update_status()
+            break
+        except Exception:  # noqa: BLE001
+            pass
     return snapshot(get(uuid))
 
 

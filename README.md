@@ -17,7 +17,14 @@ Discovery via multicast does not cross Docker NAT, so `DEVICES` is required ther
     py -m venv .venv
     .\.venv\Scripts\pip install -r requirements.txt
     .\run-windows.ps1
-To run as a service, wrap the script with NSSM or Task Scheduler ("run at startup").
+Unattended (starts at boot, no login needed): copy `.env.example` to `.env`, set DEVICES,
+then run `.\install-service.ps1` once as Administrator. Manage it in Task Scheduler as
+"iEAST Web Control".
+
+## Streaming services (Amazon Music, Spotify...)
+The local API cannot browse a service catalog; that only exists in the iEAST app.
+Save the stations/playlists the client uses as presets 1-6 in the iEAST app, then
+recall them from this page.
 
 ## Features
 Play/pause/stop/next/prev, volume, mute, input source, equalizer, presets 1-6,
